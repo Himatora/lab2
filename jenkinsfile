@@ -10,7 +10,7 @@ pipeline {
         
         // ⚠️⚠️⚠️ ЗАМЕНИ '/home/user/tutor-ontrol' на свой реальный путь! ⚠️⚠️⚠️
         TARGET_DIR = '/mnt/c/Users/User/Desktop/2lab/tutor-ontrol'
-        GIT_REPO_URL = 'https://github.com/Himatora/tutor-ontrol.git'
+        GIT_REPO_URL = 'https://github.com/Himatora/lab2'
     }
 
     triggers { 
