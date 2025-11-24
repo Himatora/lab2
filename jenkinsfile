@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('docker-hub-credentials')
+        DOCKERHUB_CREDENTIALS = credentials('github-creds')
         // ⚠️⚠️⚠️ ЗАМЕНИ 'TVOI-DOCKERHUB-LOGIN' на свой логин Docker Hub! ⚠️⚠️⚠️
         DOCKER_IMAGE_BACKEND = 'himatora/tutor-control-backend'
         DOCKER_IMAGE_FRONTEND = 'himatora/tutor-control-frontend'
