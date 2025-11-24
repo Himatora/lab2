@@ -1,0 +1,13 @@
+.git
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+pip-log.txt
+.DS_Store
+Thumbs.db
+node_modules

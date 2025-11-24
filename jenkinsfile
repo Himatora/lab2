@@ -2,70 +2,88 @@ pipeline {
     agent any
 
     environment {
-        CMD = 'C:\\Windows\\System32\\cmd.exe'
-        PM2_CMD = 'C:\\Users\\User\\node_modules\\.bin\\pm2.cmd'
-        PYTHON_EXE = 'C:\\Users\\User\\AppData\\Local\\Programs\\Python\\Python313\\python.exe'
-        TARGET_DIR = 'C:\\Users\\User\\Desktop\\jenkins\\tutor-ontrol_server'
+        DOCKERHUB_CREDENTIALS = credentials('docker-hub-credentials')
+        // ⚠️⚠️⚠️ ЗАМЕНИ 'TVOI-DOCKERHUB-LOGIN' на свой логин Docker Hub! ⚠️⚠️⚠️
+        DOCKER_IMAGE_BACKEND = 'himatora/tutor-control-backend'
+        DOCKER_IMAGE_FRONTEND = 'himatora/tutor-control-frontend'
+        DOCKER_TAG = "build-${BUILD_NUMBER}"
+        
+        // ⚠️⚠️⚠️ ЗАМЕНИ '/home/user/tutor-ontrol' на свой реальный путь! ⚠️⚠️⚠️
+        TARGET_DIR = '/mnt/c/Users/User/Desktop/2lab/tutor-ontrol'
         GIT_REPO_URL = 'https://github.com/Himatora/tutor-ontrol.git'
     }
 
     triggers { 
         githubPush() 
     }
+
     stages {
         stage('Clean Workspace and Setup') {
             steps {
-                bat """
-                    echo "Cleaning workspace and setting up environment..."
+                sh """
+                    echo "Очищаем рабочее пространство..."
                     cd "${TARGET_DIR}"
                     
-                    echo "Current directory:"
-                    cd
+                    echo "Текущая папка:"
+                    pwd
                     
-                    echo "Git status before operations:"
-                    git status || echo "Git not initialized"
+                    echo "Статус Git:"
+                    git status || echo "Git не инициализирован"
                     
-                    echo "PM2 processes before start:"
-                    "${PM2_CMD}" list || echo "PM2 not running"
+                    echo "Docker контейнеры до запуска:"
+                    docker ps -a || echo "Docker не доступен"
                     
-                    echo "=== BRANCH DETECTION ==="
+                    echo "Останавливаем старые контейнеры..."
+                    docker-compose down || echo "Нет контейнеров для остановки"
+                    
+                    echo "=== ИНФОРМАЦИЯ О ВЕТКЕ ==="
                     git branch --show-current
                     git log -1 --oneline
                 """
             }
         }
 
+        stage('Build Docker Images') {
+            steps {
+                script {
+                    echo "🛠 Собираем образ бэкенда..."
+                    dir('backend') {
+                        docker.build("${DOCKER_IMAGE_BACKEND}:${DOCKER_TAG}")
+                    }
+                    
+                    echo "🛠 Собираем образ фронтенда..."
+                    dir('frontend') {
+                        docker.build("${DOCKER_IMAGE_FRONTEND}:${DOCKER_TAG}")
+                    }
+                }
+            }
+        }
+
         stage('Start Backend Server') {
             steps {
-                bat """
+                sh """
                     cd "${TARGET_DIR}"
-
-                    echo "Stopping existing Django processes..."
-                    "${PM2_CMD}" delete django || echo "No existing Django process found"
-
-                    echo "Starting Django server..."
-                    "${PM2_CMD}" start "${PYTHON_EXE}" --name django -- manage.py runserver 127.0.0.1:8000
+                    echo "Запускаем бэкенд контейнер..."
+                    docker-compose up -d backend
                     
-                    echo "Checking if Django started..."
-                    "${PM2_CMD}" list
-                    timeout 10 || echo "Timeout check complete"
+                    echo "Ждём 10 секунд пока бэкенд запустится..."
+                    sleep 10
+                    
+                    echo "Проверяем запущенные контейнеры:"
+                    docker ps
                 """
             }
         }
 
         stage('Start Frontend Server') {
             steps {
-                bat """
-                    cd "${TARGET_DIR}\\client"
-
-                    echo "Stopping existing Vue processes..."
-                    "${PM2_CMD}" delete vue || echo "No existing Vue process found"
-
-                    echo "Starting Vue development server..."
-                    "${PM2_CMD}" start "${CMD}" --name vue -- /c "cd ${TARGET_DIR}\\client && npm run dev"
-
-                    echo "Frontend started in background via PM2"
-                    "${PM2_CMD}" list
+                sh """
+                    cd "${TARGET_DIR}"
+                    echo "Запускаем фронтенд контейнер..."
+                    docker-compose up -d frontend
+                    
+                    echo "Фронтенд запущен через Docker"
+                    docker ps
                 """
             }
         }
@@ -74,93 +92,104 @@ pipeline {
             steps {
                 script {
                     try {
-                        echo "Running Django tests..."
-                        bat """
+                        echo "Запускаем тесты Django в контейнере..."
+                        sh """
                             cd "${TARGET_DIR}"
-                            "${PYTHON_EXE}" manage.py test --verbosity=2
+                            docker-compose exec -T backend python manage.py test --verbosity=2
                         """
-                        echo "✅ All Django tests passed! Keeping servers running."
+                        echo "✅ Все тесты прошли! Контейнеры продолжают работать."
                     } catch (err) {
-                        echo "❌ Tests failed! Stopping servers..."
-                        bat """
-                            "${PM2_CMD}" delete django || echo "No Django process to delete"
-                            "${PM2_CMD}" delete vue || echo "No Vue process to delete"
+                        echo "❌ Тесты провалились! Останавливаем контейнеры..."
+                        sh """
+                            cd "${TARGET_DIR}"
+                            docker-compose down
                         """
-                        error("Django tests failed. Servers stopped.")
-                    }
-                 }
-            }
-        }
-
-         stage('Merge fix into master and deploy') {
-            when { 
-                expression { env.BRANCH_NAME?.contains('fix') || env.GIT_BRANCH?.contains('fix') } 
-            }
-            steps {
-                script {
-                    if (currentBuild.result == null || currentBuild.result == 'SUCCESS') {
-                        withCredentials([
-                            usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN'),
-                            string(credentialsId: 'github-email', variable: 'GIT_EMAIL')
-                        ]) {
-                            bat """
-                                :: *** ПРЕДВАРИТЕЛЬНАЯ НАСТРОЙКА GIT ***
-                                git config --global --add safe.directory "C:/Users/User/Desktop/jenkins/tutor-ontrol_server"
-                                
-                                git config user.name "%GIT_USER%"
-                                git config user.email "%GIT_EMAIL%"
-
-                                :: *** 1. GIT-ОПЕРАЦИИ В JENKINS WORKSPACE (СЛИЯНИЕ И PUSH НА GITHUB) ***
-                                
-                                git checkout master
-                                git pull https://%GIT_USER%:%GIT_TOKEN%@github.com/Himatora/tutor-ontrol.git master
-                                git merge origin/fix --no-ff
-                                git push https://%GIT_USER%:%GIT_TOKEN%@github.com/Himatora/tutor-ontrol.git master
-
-                                git checkout fix
-                                git reset --hard master
-                                git push --force https://%GIT_USER%:%GIT_TOKEN%@github.com/Himatora/tutor-ontrol.git fix
-
-                                :: *** 2. РАЗВЕРТЫВАНИЕ И ОБНОВЛЕНИЕ КОДА В TARGET_DIR ***
-                                
-                                cd "${TARGET_DIR}"
-                                
-                                :: Инициализация Git в целевой папке, если она еще не репозиторий
-                                if not exist .git (
-                                    git init
-                                    git remote add origin https://%GIT_USER%:%GIT_TOKEN%@github.com/Himatora/tutor-ontrol.git
-                                )
-
-                                :: 🎯 ИСПРАВЛЕНИЕ #2: Скачиваем самый свежий код из обновленной master и обновляем сервер!
-                                git fetch
-                                git checkout master
-                                git pull https://%GIT_USER%:%GIT_TOKEN%@github.com/Himatora/tutor-ontrol.git master 
-
-                                :: *** 3. PM2-ОПЕРАЦИИ (ПЕРЕЗАПУСК) ***
-                                
-                                :: Перезапуск Django
-                                call "${PM2_CMD}" delete django || echo No Django process
-                                call "${PM2_CMD}" start "${PYTHON_EXE}" --name django -- manage.py runserver 127.0.0.1:8000
-
-                                :: Перезапуск Vue
-                                cd "${TARGET_DIR}\\client"
-                                call "${PM2_CMD}" delete vue || echo No Vue process
-                                call "${PM2_CMD}" start "${CMD}" --name vue -- /c "cd ${TARGET_DIR}\\client && npm run dev"
-                            """
-                        }
-                    } else {
-                        echo "Tests failed. Skipping merge and deployment."
+                        error("Тесты Django провалились. Контейнеры остановлены.")
                     }
                 }
             }
         }
+
+        stage('Push Images to Docker Hub') {
+            when { 
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' } 
+            }
+            steps {
+                script {
+                    echo "📦 Публикуем образы в Docker Hub..."
+                    docker.withRegistry('', DOCKERHUB_CREDENTIALS) {
+                        docker.image("${DOCKER_IMAGE_BACKEND}:${DOCKER_TAG}").push()
+                        docker.image("${DOCKER_IMAGE_FRONTEND}:${DOCKER_TAG}").push()
+                        docker.image("${DOCKER_IMAGE_BACKEND}:${DOCKER_TAG}").push('latest')
+                        docker.image("${DOCKER_IMAGE_FRONTEND}:${DOCKER_TAG}").push('latest')
+                    }
+                }
+            }
+        }
+
+        stage('Merge fix into master and deploy') {
+            when { 
+                expression { 
+                    (env.BRANCH_NAME?.contains('fix') || env.GIT_BRANCH?.contains('fix')) && 
+                    (currentBuild.result == null || currentBuild.result == 'SUCCESS')
+                } 
+            }
+            steps {
+                script {
+                    echo "🔄 Мержим ветку fix в master и деплоим..."
+                    
+                    withCredentials([
+                        usernamePassword(credentialsId: 'github-creds', usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN'),
+                        string(credentialsId: 'github-email', variable: 'GIT_EMAIL')
+                    ]) {
+                        sh """
+                            # Настройка Git
+                            git config --global --add safe.directory "${TARGET_DIR}"
+                            git config user.name "${GIT_USER}"
+                            git config user.email "${GIT_EMAIL}"
+
+                            # Мерж fix в master
+                            git checkout master
+                            git pull https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/tutor-ontrol.git master
+                            git merge origin/fix --no-ff
+                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/tutor-ontrol.git master
+
+                            git checkout fix
+                            git reset --hard master
+                            git push --force https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/tutor-ontrol.git fix
+
+                            # Возвращаемся на master для деплоя
+                            git checkout master
+                        """
+                    }
+
+                    # Перезапускаем контейнеры с обновлённым кодом
+                    echo "🚀 Деплоим обновлённый master..."
+                    sh """
+                        cd "${TARGET_DIR}"
+                        docker-compose down
+                        docker-compose up -d
+                    """
+
+                    echo "✅ Ветка fix вмержена в master и развёрнута!"
+                }
+            }
+        }
     }
-    
+
     post {
+        always {
+            echo "🧹 Убираем временные образы..."
+            sh """
+                docker rmi ${DOCKER_IMAGE_BACKEND}:${DOCKER_TAG} || echo "Не удалось удалить бэкенд образ"
+                docker rmi ${DOCKER_IMAGE_FRONTEND}:${DOCKER_TAG} || echo "Не удалось удалить фронтенд образ"
+            """
+        }
         success {
-            echo "Deployment successful. Backend and Frontend are running via PM2 with the latest code!"
-            echo "Backend: http://127.0.0.1:8000/"
-            echo "Frontend: http://127.0.0.1:5173/"
+            echo "🎉 Деплой успешен! Бэкенд и фронтенд работают через Docker"
+            echo "📍 Фронтенд: http://localhost/"
+            echo "📍 Бэкенд: http://localhost:8000/"
+            echo "📍 Админка: http://localhost:8000/admin/"
         }
     }
 }
