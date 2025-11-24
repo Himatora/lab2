@@ -150,13 +150,13 @@ pipeline {
 
                             # Мерж fix в master
                             git checkout master
-                            git pull https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/tutor-ontrol.git master
+                            git pull https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/lab2.git master
                             git merge origin/fix --no-ff
-                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/tutor-ontrol.git master
+                            git push https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/lab2.git master
 
                             git checkout fix
                             git reset --hard master
-                            git push --force https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/tutor-ontrol.git fix
+                            git push --force https://${GIT_USER}:${GIT_TOKEN}@github.com/Himatora/lab2.git fix
 
                             # Возвращаемся на master для деплоя
                             git checkout master
